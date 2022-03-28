@@ -29,50 +29,52 @@ if (isset($options["about"]) || isset($options["a"])) {
     $i = 1;
 
     if ($file = fopen($hashfile, "r")) {
-        $text = fread($file, filesize($hashfile));
+        $text = trim(fread($file, filesize($hashfile)));
         $hashes = explode(PHP_EOL, $text);
         foreach ($hashes as $hash) {
-            if (!is_null(trim($hash)) && !empty(trim($hash)) && trim($hash) !== "\n" && trim($hash) !== "\r") {
-                echo "\n";
-                echo "Attacking: " . $hash . "\n";
-                echo "----------------------------" . "\n";
-                if ($passwords = fopen($wordlist, "r")) {
-                    while (($password = fgets($passwords)) !== false) {
-                        if (password_verify(trim($password), trim($hash))) {
-                            echo "\e[1;32m";
+            $hash = trim($hash);
+
+            echo "\n";
+            echo "Attacking: " . $hash . "\n";
+            echo "----------------------------" . "\n";
+            if ($passwords = fopen($wordlist, "r")) {
+                while (($password = fgets($passwords)) !== false) {
+                    $password = trim($password);
+
+                    if (isset($options["verbose"]) || isset($options["v"])) {
+                        echo "Check Password: " . $password . "\n";
+                    }
+
+                    if (password_verify($password, $hash)) {
+                        echo "\e[1;32m";
+                        echo "-------------------------------\n";
+                        echo "Password Found: " . $password . "\n";
+                        echo "-------------------------------\n";
+                        echo "\e[0m";
+                        $found[] = [$hash => $password];
+                        break;
+                    } else {
+                        if ($i == $lines) {
+                            echo "\e[1;31m";
                             echo "-------------------------------\n";
-                            echo "Password Found: " . trim($password) . "\n";
+                            echo "Password not found ):\n";
                             echo "-------------------------------\n";
                             echo "\e[0m";
-                            $found[] = [$hash => $password];
+                            $i = 1;
                             break;
-                        } else {
-                            if (isset($options["verbose"]) || isset($options["v"])) {
-                                echo "Check Password: " . trim($password) . "\n";
-                            }
-
-                            if ($i == $lines) {
-                                echo "\e[1;31m";
-                                echo "-------------------------------\n";
-                                echo "Password not found ):\n";
-                                echo "-------------------------------\n";
-                                echo "\e[0m";
-                                $i = 1;
-                                break;
-                            }
                         }
-                        $i++;
                     }
+                    $i++;
                 }
-                fclose($passwords);
             }
+            fclose($passwords);
         }
     }
     fclose($file);
 
     if (!empty($found)) {
-
         echo "Do you want to export result (Y/N): ";
+
         $option = readline("");
         if ($option == "Y" || $option == "y" || $option == "yes") {
             $filename = "result - " . date("Y-m-d h_m_s") . ".txt";
@@ -98,10 +100,10 @@ if (isset($options["about"]) || isset($options["a"])) {
 function getLines($file)
 {
     $f = fopen($file, 'rb');
-    $lines = 0;
+    $lines = 1;
 
     while (!feof($f)) {
-        $lines += substr_count(fread($f, 8192), "\n");
+        $lines += substr_count(fread($f, filesize($file)), "\n");
     }
 
     fclose($f);
