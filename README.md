@@ -1,4 +1,66 @@
-# PHP_PasswordHash_Cracker
+# BrutyF
 Simple PHP PasswordHash Function Attacker
 
 This project is for educational purposes only
+
+```
+-------------------------------------
+  ____             _         ______ 
+ |  _ \           | |       |  ____|
+ | |_) |_ __ _   _| |_ _   _| |__   
+ |  _ <| '__| | | | __| | | |  __|  
+ | |_) | |  | |_| | |_| |_| | |     
+ |____/|_|   \__,_|\__|\__, |_|     
+                        __/ |       
+                       |___/ v1.0
+-------------------------------------
+Usage:
+attack.php -f=<hashfile> -w=<passwordlist>
+Example:
+attack.php -f=hash.txt -w=passwords.txt
+-----------------------------------------------------
+```
+
+## Options
+
+```
+hashfile: For text file that contains the hashes
+wordlist: The wordlist you want to test
+verbose: Show the current password
+about: About the script
+```
+
+## Example
+
+```
+-------------------------------------
+  ____             _         ______ 
+ |  _ \           | |       |  ____|
+ | |_) |_ __ _   _| |_ _   _| |__   
+ |  _ <| '__| | | | __| | | |  __|  
+ | |_) | |  | |_| | |_| |_| | |     
+ |____/|_|   \__,_|\__|\__, |_|     
+                        __/ |       
+                       |___/ v1.0
+-------------------------------------
+
+Attacking: $2y$10$ImJJdLh/Nn8mDwcC2FniMu0FHYLSA7rCeNHRu5qD4TShnDu2LmVkW
+----------------------------
+Check Password: 123456
+Check Password: 12345
+Check Password: 123456789
+Check Password: password
+Check Password: iloveyou
+Check Password: princess
+Check Password: 1234567
+Check Password: 12345678
+Check Password: abc123
+-------------------------------
+Password Found: nicole
+-------------------------------
+Do you want to export result (Y/N): 
+```
+
+## License
+
+MIT
