@@ -14,15 +14,14 @@ echo "\e[1;31m
 ";
 
 $short_options = "f:w:va";
-$long_options = ["wordlist:", "hash:", "verbose", "about"];
+$long_options = ["wordlist:", "hashfile:", "verbose", "about"];
 $options = getopt($short_options, $long_options);
 
 if (isset($options["about"]) || isset($options["a"])) {
     about();
-} elseif ((isset($options["wordlist"]) || isset($options["w"])) && (isset($options["f"]) || isset($options["hash"]))) {
-
-    $hashfile = isset($options["hashfile"]) ? $options["hashfile"] : $options["f"];
-    $wordlist = isset($options["wordlist"]) ? $options["wordlist"] : $options["w"];
+} elseif ((isset($options["wordlist"]) || isset($options["w"])) && (isset($options["f"]) || isset($options["hashfile"]))) {
+    $hashfile = $options["hashfile"] ?? $options["f"];
+    $wordlist = $options["wordlist"] ?? $options["w"];
 
     $lines = getLines($wordlist);
     $found = [];
@@ -35,20 +34,20 @@ if (isset($options["about"]) || isset($options["a"])) {
             $hash = trim($hash);
 
             echo "\n";
-            echo "Attacking: " . $hash . "\n";
+            echo "Attacking: {$hash}\n";
             echo "----------------------------" . "\n";
             if ($passwords = fopen($wordlist, "r")) {
                 while (($password = fgets($passwords)) !== false) {
                     $password = trim($password);
 
                     if (isset($options["verbose"]) || isset($options["v"])) {
-                        echo "Check Password: " . $password . "\n";
+                        echo "Check Password: {$password}\n";
                     }
 
                     if (password_verify($password, $hash)) {
                         echo "\e[1;32m";
                         echo "-------------------------------\n";
-                        echo "Password Found: " . $password . "\n";
+                        echo "Password Found: {$password}\n";
                         echo "-------------------------------\n";
                         echo "\e[0m";
                         $found[] = [$hash => $password];
