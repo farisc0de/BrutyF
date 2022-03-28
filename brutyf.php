@@ -73,9 +73,8 @@ if (isset($options["about"]) || isset($options["a"])) {
     fclose($file);
 
     if (!empty($found)) {
-        echo "Do you want to export result (Y/N): ";
+        $option = readline("Do you want to export result (Y/n): ");
 
-        $option = readline("");
         if ($option == "Y" || $option == "y" || $option == "yes") {
             $filename = "result - " . date("Y-m-d h_m_s") . ".txt";
             $myfile = fopen($filename, "w+");
