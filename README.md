@@ -57,10 +57,12 @@ Check Password: princess
 Check Password: 1234567
 Check Password: 12345678
 Check Password: abc123
+Check Password: nicole
 -------------------------------
 Password Found: nicole
 -------------------------------
-Do you want to export result (Y/N): 
+Do you want to export result (Y/n): y
+Result Saved (: 
 ```
 
 ## License
