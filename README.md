@@ -1,7 +1,7 @@
 # BrutyF
 Simple PHP PasswordHash Function Attacker
 
-I created this project for fun 😄
+I created this project for fun 😄 and to learn how to create PHP console applications
 
 This project is for educational purposes only
 
