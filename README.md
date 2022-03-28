@@ -5,7 +5,7 @@ I created this project for fun 😄
 
 This project is for educational purposes only
 
-```
+```bash
 -------------------------------------
   ____             _         ______ 
  |  _ \           | |       |  ____|
@@ -17,9 +17,9 @@ This project is for educational purposes only
                        |___/ v1.0
 -------------------------------------
 Usage:
-attack.php -f=<hashfile> -w=<passwordlist>
+brutyf.php -f=<hashfile> -w=<passwordlist>
 Example:
-attack.php -f=hash.txt -w=passwords.txt
+brutyf.php -f=hash.txt -w=passwords.txt
 -----------------------------------------------------
 ```
 
@@ -34,7 +34,7 @@ about: About the script
 
 ## Example
 
-```
+```bash
 -------------------------------------
   ____             _         ______ 
  |  _ \           | |       |  ____|
