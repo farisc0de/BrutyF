@@ -1,6 +1,8 @@
 # BrutyF
 Simple PHP PasswordHash Function Attacker
 
+I created this project for fun 😄
+
 This project is for educational purposes only
 
 ```
