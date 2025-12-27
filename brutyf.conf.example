@@ -1,0 +1,11 @@
+{
+    "threads": 4,
+    "verbose": false,
+    "quiet": false,
+    "color": true,
+    "output_format": "text",
+    "hash_type": "auto",
+    "rules": [],
+    "log_file": null,
+    "log_level": "info"
+}

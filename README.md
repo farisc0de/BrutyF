@@ -1,28 +1,36 @@
 # BrutyF
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.0-blue.svg" alt="Version 2.0">
-  <img src="https://img.shields.io/badge/php-%3E%3D7.4-green.svg" alt="PHP >= 7.4">
+  <img src="https://img.shields.io/badge/version-3.0-blue.svg" alt="Version 3.0">
+  <img src="https://img.shields.io/badge/php-%3E%3D8.0-green.svg" alt="PHP >= 8.0">
   <img src="https://img.shields.io/badge/license-MIT-orange.svg" alt="License: MIT">
 </p>
 
 ## 🔒 Overview
 
-BrutyF is a powerful PHP-based password hash cracking tool designed to efficiently test wordlists against hashed passwords. It supports multithreading for improved performance and provides detailed progress reporting.
+BrutyF is a powerful PHP-based password hash cracking tool designed to efficiently test wordlists against hashed passwords. It supports multiple hash types, multithreading, mask-based brute-force attacks, rule-based mutations, and provides detailed progress reporting with statistics.
 
 ## ✨ Features
 
-- **Fast Password Cracking**: Efficiently test wordlists against hashed passwords
+- **Multi-Hash Support**: MD5, SHA1, SHA256, SHA512, bcrypt, NTLM, MySQL (old & new)
+- **Auto Hash Detection**: Automatically identifies hash type based on format
 - **Multithreading Support**: Utilize multiple CPU cores for faster cracking (Unix/Linux only)
-- **Smart Resource Management**: Automatically optimize memory usage based on input size
-- **Detailed Progress Reporting**: Real-time progress percentage and status updates
-- **Verbose Mode**: Detailed output of each password attempt
-- **Result Export**: Save successful cracks to a formatted output file
+- **Mask-Based Brute Force**: Generate passwords using customizable masks
+- **Rule-Based Mutations**: Apply transformations like leet speak, case changes, appending numbers
+- **Resume Support**: Continue interrupted attacks from where they left off
+- **Compressed Wordlists**: Support for .gz and .bz2 compressed wordlists
+- **Multiple Output Formats**: Export results as text, JSON, or CSV
+- **Detailed Statistics**: Speed, ETA, memory usage, and comprehensive reports
+- **Configuration Files**: Save default settings in config files
+- **Logging**: Optional file-based logging with configurable levels
+- **Quiet Mode**: Silent operation for scripting and automation
+- **Stdin Support**: Read hashes from stdin for piping
 
 ## 📋 Requirements
 
-- PHP 7.4 or higher
+- PHP 8.0 or higher
 - For multithreading: PHP with pcntl extension (Unix/Linux systems only)
+- For compressed wordlists: PHP with zlib/bz2 extensions
 
 ## 🚀 Installation
 
@@ -54,59 +62,168 @@ Example:
 
 | Option | Long Option | Description |
 |--------|-------------|--------------|
-| `-f`   | `--hashfile=FILE` | File containing hashed passwords |
-| `-w`   | `--wordlist=FILE` | Wordlist file with passwords to try |
-| `-v`   | `--verbose` | Show detailed progress of each attempt |
+| `-f`   | `--hashfile=FILE` | File containing hashed passwords (use `-` for stdin) |
+| `-w`   | `--wordlist=FILE` | Wordlist file (supports .gz, .bz2) |
+| `-m`   | `--mask=MASK` | Mask for brute-force mode |
 | `-t`   | `--threads=NUM` | Number of threads (1-16, default: 1) |
+| `-H`   | `--hash-type=TYPE` | Hash type (auto, md5, sha1, sha256, sha512, bcrypt, ntlm, mysql, mysql5) |
+| `-r`   | `--resume` | Resume previous session |
+| `-v`   | `--verbose` | Show detailed progress of each attempt |
+| `-q`   | `--quiet` | Suppress output (for scripting) |
+| `-o`   | `--output=FILE` | Output file for results |
+|        | `--format=FORMAT` | Output format (text, json, csv) |
+|        | `--no-color` | Disable colored output |
+|        | `--rules=RULES` | Comma-separated mutation rules |
+|        | `--log=FILE` | Log file path |
+|        | `--log-level=LEVEL` | Log level (debug, info, warning, error) |
 | `-a`   | `--about` | Show information about BrutyF |
+| `-h`   | `--help` | Show help message |
 
 ### Advanced Usage
 
 #### Using Multithreading
 
-To utilize multiple CPU cores (Unix/Linux systems only):
-
 ```bash
 ./brutyf.php -f=hash.txt -w=passwords.txt -t=4
 ```
 
-This will distribute the workload across 4 threads.
-
-#### Verbose Mode
-
-To see each password attempt in real-time:
+#### Specifying Hash Type
 
 ```bash
-./brutyf.php -f=hash.txt -w=passwords.txt -v
+./brutyf.php -f=hash.txt -w=passwords.txt -H=md5
+```
+
+#### Mask-Based Brute Force
+
+Generate passwords using masks:
+
+```bash
+./brutyf.php -f=hash.txt -m='?l?l?l?l?d?d' -t=8
+```
+
+**Mask Characters:**
+- `?l` - Lowercase letters (a-z)
+- `?u` - Uppercase letters (A-Z)
+- `?d` - Digits (0-9)
+- `?s` - Special characters
+- `?a` - All printable characters
+
+#### Using Rules
+
+Apply password mutations:
+
+```bash
+./brutyf.php -f=hash.txt -w=passwords.txt --rules=leet,append_123,capitalize
+```
+
+**Available Rules:**
+- `none` - Original password
+- `lowercase` - all lowercase
+- `uppercase` - ALL UPPERCASE
+- `capitalize` - Capitalize first letter
+- `reverse` - Reverse the password
+- `leet` - l33t speak (a→4, e→3, etc.)
+- `append_123` - Append "123"
+- `append_1` - Append "1"
+- `append_!` - Append "!"
+- `prepend_123` - Prepend "123"
+- `duplicate` - Duplicate password
+- `toggle_case` - Toggle case (pAsSwOrD)
+
+#### Resume Interrupted Attack
+
+```bash
+./brutyf.php -f=hash.txt -w=passwords.txt -r
+```
+
+#### Export Results
+
+```bash
+./brutyf.php -f=hash.txt -w=passwords.txt -o=results.json --format=json
+```
+
+#### Piping Hashes
+
+```bash
+cat hashes.txt | ./brutyf.php -f=- -w=passwords.txt -q -o=results.txt
+```
+
+#### Using Compressed Wordlists
+
+```bash
+./brutyf.php -f=hash.txt -w=rockyou.txt.gz -t=4
 ```
 
 ## 📁 File Formats
 
 ### Hash File Format
 
-The hash file should contain one hash per line:
+The hash file should contain one hash per line. Supports multiple formats:
 
+**Plain hashes:**
 ```
-$2y$10$abcdefghijklmnopqrstuOQsvMFYKFTyuiLQpjqEO8Jgm4fYEFGhi
-$2y$10$123456789abcdefghijklOPqrstuvwxyzABCDEFGHIJKLMNOPQRS
+5f4dcc3b5aa765d61d8327deb882cf99
+e10adc3949ba59abbe56e057f20f883e
 ```
 
-### Wordlist Format
-
-The wordlist file should contain one password per line:
-
+**With usernames (username:hash):**
 ```
-password123
-admin
-secret
-12345678
+admin:5f4dcc3b5aa765d61d8327deb882cf99
+user:e10adc3949ba59abbe56e057f20f883e
+```
+
+**With salt (hash:salt):**
+```
+5f4dcc3b5aa765d61d8327deb882cf99:randomsalt
+```
+
+### Supported Hash Types
+
+| Type | Example |
+|------|---------|
+| MD5 | `5f4dcc3b5aa765d61d8327deb882cf99` |
+| SHA1 | `5baa61e4c9b93f3f0682250b6cf8331b7ee68fd8` |
+| SHA256 | `5e884898da28047d9169e1850...` (64 chars) |
+| SHA512 | `b109f3bbbc244eb8...` (128 chars) |
+| bcrypt | `$2y$10$abcdefghijklmnopqrstuO...` |
+| NTLM | `32ED87BDB5FDC5E9CBA88547376818D4` |
+| MySQL (old) | `565491d704013245` |
+| MySQL5 | `*2470C0C06DEE42FD1618BB9900DFG1E6Y89F4` |
+
+## ⚙️ Configuration
+
+Create a `brutyf.conf` or `.brutyfrc` file in your home directory or project folder:
+
+```json
+{
+    "threads": 4,
+    "verbose": false,
+    "quiet": false,
+    "color": true,
+    "output_format": "text",
+    "hash_type": "auto",
+    "rules": [],
+    "log_file": null,
+    "log_level": "info"
+}
 ```
 
 ## 📊 Performance Tips
 
-1. **Optimize Thread Count**: For best performance, set threads to match your CPU core count
-2. **Wordlist Size**: Large wordlists benefit more from multithreading
-3. **Avoid Verbose Mode**: For maximum speed, only use verbose mode for debugging
+1. **Optimize Thread Count**: Set threads to match your CPU core count
+2. **Use Compressed Wordlists**: Save disk space with .gz files
+3. **Avoid Verbose Mode**: Only use for debugging
+4. **Use Rules Wisely**: More rules = more combinations = slower
+5. **Resume Large Attacks**: Use `-r` flag for long-running attacks
+
+## 📈 Statistics
+
+After each attack, BrutyF displays:
+- Total time elapsed
+- Passwords tried
+- Passwords found
+- Speed (passwords/second)
+- Peak memory usage
 
 ## 📝 License
 
