@@ -14,8 +14,14 @@ BrutyF is a powerful PHP-based password hash cracking tool designed to efficient
 
 - **Multi-Hash Support**: MD5, SHA1, SHA256, SHA512, bcrypt, NTLM, MySQL (old & new)
 - **Auto Hash Detection**: Automatically identifies hash type based on format
+- **Multiple Attack Modes**:
+  - **Wordlist Attack**: Traditional dictionary attack
+  - **Mask Attack**: Brute-force with customizable character masks
+  - **Hybrid Attack**: Wordlist + mask combination (e.g., `password?d?d?d`)
+  - **Combinator Attack**: Combine two wordlists (word1 + word2)
+- **Potfile Support**: Automatically stores cracked hashes to avoid re-cracking
+- **Benchmark Mode**: Test hash speeds on your system
 - **Multithreading Support**: Utilize multiple CPU cores for faster cracking (Unix/Linux only)
-- **Mask-Based Brute Force**: Generate passwords using customizable masks
 - **Rule-Based Mutations**: Apply transformations like leet speak, case changes, appending numbers
 - **Resume Support**: Continue interrupted attacks from where they left off
 - **Compressed Wordlists**: Support for .gz and .bz2 compressed wordlists
@@ -76,6 +82,12 @@ Example:
 |        | `--rules=RULES` | Comma-separated mutation rules |
 |        | `--log=FILE` | Log file path |
 |        | `--log-level=LEVEL` | Log level (debug, info, warning, error) |
+|        | `--attack-mode=MODE` | Attack mode: wordlist, mask, hybrid, combinator |
+|        | `--wordlist2=FILE` | Second wordlist for combinator attack |
+|        | `--potfile=FILE` | Custom potfile path |
+|        | `--no-potfile` | Disable potfile |
+|        | `--show-pot` | Show cracked hashes from potfile |
+| `-b`   | `--benchmark` | Run hash speed benchmark |
 | `-a`   | `--about` | Show information about BrutyF |
 | `-h`   | `--help` | Show help message |
 
@@ -152,6 +164,48 @@ cat hashes.txt | ./brutyf.php -f=- -w=passwords.txt -q -o=results.txt
 
 ```bash
 ./brutyf.php -f=hash.txt -w=rockyou.txt.gz -t=4
+```
+
+#### Hybrid Attack (Wordlist + Mask)
+
+Combine words with generated suffixes/prefixes:
+
+```bash
+./brutyf.php -f=hash.txt -w=words.txt -m='?d?d?d'
+```
+
+This tries each word followed by 3 digits (e.g., `password000`, `password001`, ..., `admin999`).
+
+#### Combinator Attack
+
+Combine two wordlists:
+
+```bash
+./brutyf.php -f=hash.txt -w=first.txt --wordlist2=last.txt
+```
+
+This concatenates each word from the first list with each word from the second (e.g., `johnsmith`, `johndoe`, `marysmith`).
+
+#### Benchmark Mode
+
+Test hash speeds on your system:
+
+```bash
+./brutyf.php --benchmark
+```
+
+#### Potfile Management
+
+View previously cracked hashes:
+
+```bash
+./brutyf.php --show-pot
+```
+
+Disable potfile for a session:
+
+```bash
+./brutyf.php -f=hash.txt -w=passwords.txt --no-potfile
 ```
 
 ## 📁 File Formats

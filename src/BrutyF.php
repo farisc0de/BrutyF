@@ -8,12 +8,13 @@ namespace BrutyF;
  */
 class BrutyF
 {
-    private const VERSION = '3.0';
+    private const VERSION = '3.4';
     private const AUTHOR = 'farisc0de';
     private const EMAIL = 'farisksa79@gmail.com';
     
     private string $hashFile = '';
     private string $wordlistFile = '';
+    private string $wordlistFile2 = '';
     private string $mask = '';
     private bool $verbose = false;
     private bool $quiet = false;
@@ -24,6 +25,20 @@ class BrutyF
     private ?string $outputFile = null;
     private array $rules = [];
     private bool $resume = false;
+    private string $attackMode = 'wordlist';
+    private bool $usePotfile = true;
+    private ?string $potfilePath = null;
+    private int $skip = 0;
+    private int $limit = 0;
+    private int $incrementMin = 1;
+    private int $incrementMax = 8;
+    private array $customCharsets = [];
+    private ?string $statusFile = null;
+    private bool $jsonOutput = false;
+    private ?string $webhookUrl = null;
+    private ?WebhookNotifier $webhook = null;
+    private ?string $markovFile = null;
+    private int $markovOrder = 2;
     
     private array $found = [];
     private bool $pcntlAvailable;
@@ -32,6 +47,7 @@ class BrutyF
     private Statistics $stats;
     private Logger $logger;
     private ?RuleEngine $ruleEngine = null;
+    private ?Potfile $potfile = null;
     
     private ?string $sharedMemFile = null;
     
@@ -48,6 +64,7 @@ class BrutyF
         
         $this->hashFile = $options['hashfile'] ?? '';
         $this->wordlistFile = $options['wordlist'] ?? '';
+        $this->wordlistFile2 = $options['wordlist2'] ?? '';
         $this->mask = $options['mask'] ?? '';
         $this->verbose = $options['verbose'] ?? $this->config->get('verbose', false);
         $this->quiet = $options['quiet'] ?? $this->config->get('quiet', false);
@@ -58,6 +75,23 @@ class BrutyF
         $this->outputFile = $options['output_file'] ?? null;
         $this->rules = $options['rules'] ?? $this->config->get('rules', []);
         $this->resume = $options['resume'] ?? false;
+        $this->attackMode = $options['attack_mode'] ?? 'wordlist';
+        $this->usePotfile = $options['potfile'] ?? $this->config->get('potfile', true);
+        $this->potfilePath = $options['potfile_path'] ?? $this->config->get('potfile_path');
+        $this->skip = $options['skip'] ?? 0;
+        $this->limit = $options['limit'] ?? 0;
+        $this->incrementMin = $options['increment_min'] ?? 1;
+        $this->incrementMax = $options['increment_max'] ?? 8;
+        $this->customCharsets = $options['custom_charsets'] ?? [];
+        $this->statusFile = $options['status_file'] ?? null;
+        $this->jsonOutput = $options['json_output'] ?? false;
+        $this->webhookUrl = $options['webhook'] ?? null;
+        $this->markovFile = $options['markov_file'] ?? null;
+        $this->markovOrder = $options['markov_order'] ?? 2;
+        
+        if ($this->webhookUrl) {
+            $this->webhook = new WebhookNotifier([$this->webhookUrl]);
+        }
         
         $logFile = $options['log_file'] ?? $this->config->get('log_file');
         $logLevel = $options['log_level'] ?? $this->config->get('log_level', 'info');
@@ -72,13 +106,42 @@ class BrutyF
             $this->printWarning("pcntl extension not available. Multithreading disabled.");
             $this->threads = 1;
         }
+        
+        if ($this->usePotfile) {
+            $this->potfile = new Potfile($this->potfilePath);
+        }
     }
     
     public function run(): void
     {
         $this->printBanner();
         
-        if (!empty($this->mask)) {
+        if ($this->attackMode === 'incremental') {
+            $this->runIncrementalMode();
+            return;
+        }
+        
+        if ($this->attackMode === 'markov') {
+            $this->runMarkovMode();
+            return;
+        }
+        
+        if ($this->attackMode === 'keyboard-walk') {
+            $this->runKeyboardWalkMode();
+            return;
+        }
+        
+        if ($this->attackMode === 'hybrid' && !empty($this->wordlistFile) && !empty($this->mask)) {
+            $this->runHybridMode();
+            return;
+        }
+        
+        if ($this->attackMode === 'combinator' && !empty($this->wordlistFile) && !empty($this->wordlistFile2)) {
+            $this->runCombinatorMode();
+            return;
+        }
+        
+        if (!empty($this->mask) && empty($this->wordlistFile)) {
             $this->runMaskMode();
             return;
         }
@@ -116,6 +179,472 @@ class BrutyF
         $this->printStatistics();
     }
     
+    private function runHybridMode(): void
+    {
+        if (empty($this->hashFile)) {
+            $this->printError("Hash file is required for hybrid mode");
+            return;
+        }
+        
+        if (!file_exists($this->hashFile)) {
+            $this->printError("Hash file not found: {$this->hashFile}");
+            return;
+        }
+        
+        if (!file_exists($this->wordlistFile)) {
+            $this->printError("Wordlist file not found: {$this->wordlistFile}");
+            return;
+        }
+        
+        $hashes = $this->readHashFile();
+        $hashes = $this->filterPotfileHashes($hashes);
+        
+        if (empty($hashes)) {
+            $this->printInfo("All hashes already cracked (found in potfile)");
+            return;
+        }
+        
+        $generator = HybridGenerator::fromWordlistFile($this->wordlistFile, $this->mask);
+        $totalCombinations = $generator->getTotalCombinations();
+        
+        $this->printInfo("Hybrid mode: wordlist + mask ({$this->mask})");
+        $this->printInfo("Total combinations: " . number_format($totalCombinations));
+        
+        $this->stats->start();
+        
+        foreach ($hashes as $hashEntry) {
+            $hashEntry = trim($hashEntry);
+            if (empty($hashEntry)) continue;
+            
+            [$hash, $salt, $username] = $this->parseHashEntry($hashEntry);
+            $type = $this->hashType === 'auto' ? HashIdentifier::identify($hash) : $this->hashType;
+            
+            $this->printInfo("Attacking: {$hash} (Type: {$type})");
+            
+            $i = 0;
+            foreach ($generator as $password) {
+                $i++;
+                
+                if ($this->verbose) {
+                    echo "Trying [{$i}/{$totalCombinations}]: {$password}\n";
+                }
+                
+                if (HashIdentifier::verify($password, $hash, $type, $salt)) {
+                    $this->printSuccess("Password Found: {$password}");
+                    $this->found[] = [$hash => $password];
+                    $this->stats->incrementFound();
+                    $this->addToPotfile($hash, $password);
+                    break;
+                }
+                
+                if ($i % 1000 === 0) {
+                    $percentage = round(($i / $totalCombinations) * 100, 2);
+                    $this->printProgress($percentage, $i, $totalCombinations);
+                }
+                
+                $this->stats->incrementPasswords();
+            }
+            
+            $generator->rewind();
+        }
+        
+        $this->stats->stop();
+        $this->handleResults();
+        $this->printStatistics();
+    }
+    
+    private function runCombinatorMode(): void
+    {
+        if (empty($this->hashFile)) {
+            $this->printError("Hash file is required for combinator mode");
+            return;
+        }
+        
+        if (!file_exists($this->hashFile)) {
+            $this->printError("Hash file not found: {$this->hashFile}");
+            return;
+        }
+        
+        if (!file_exists($this->wordlistFile) || !file_exists($this->wordlistFile2)) {
+            $this->printError("Both wordlist files are required for combinator mode");
+            return;
+        }
+        
+        $hashes = $this->readHashFile();
+        $hashes = $this->filterPotfileHashes($hashes);
+        
+        if (empty($hashes)) {
+            $this->printInfo("All hashes already cracked (found in potfile)");
+            return;
+        }
+        
+        $generator = CombinatorGenerator::fromFiles($this->wordlistFile, $this->wordlistFile2);
+        $totalCombinations = $generator->getTotalCombinations();
+        
+        $this->printInfo("Combinator mode: wordlist1 + wordlist2");
+        $this->printInfo("Total combinations: " . number_format($totalCombinations));
+        
+        $this->stats->start();
+        
+        foreach ($hashes as $hashEntry) {
+            $hashEntry = trim($hashEntry);
+            if (empty($hashEntry)) continue;
+            
+            [$hash, $salt, $username] = $this->parseHashEntry($hashEntry);
+            $type = $this->hashType === 'auto' ? HashIdentifier::identify($hash) : $this->hashType;
+            
+            $this->printInfo("Attacking: {$hash} (Type: {$type})");
+            
+            $i = 0;
+            foreach ($generator as $password) {
+                $i++;
+                
+                if ($this->verbose) {
+                    echo "Trying [{$i}/{$totalCombinations}]: {$password}\n";
+                }
+                
+                if (HashIdentifier::verify($password, $hash, $type, $salt)) {
+                    $this->printSuccess("Password Found: {$password}");
+                    $this->found[] = [$hash => $password];
+                    $this->stats->incrementFound();
+                    $this->addToPotfile($hash, $password);
+                    break;
+                }
+                
+                if ($i % 1000 === 0) {
+                    $percentage = round(($i / $totalCombinations) * 100, 2);
+                    $this->printProgress($percentage, $i, $totalCombinations);
+                }
+                
+                $this->stats->incrementPasswords();
+            }
+            
+            $generator->rewind();
+        }
+        
+        $this->stats->stop();
+        $this->handleResults();
+        $this->printStatistics();
+    }
+    
+    public function benchmark(): void
+    {
+        $benchmark = new Benchmark();
+        $benchmark->run($this->useColor);
+    }
+    
+    private function runIncrementalMode(): void
+    {
+        if (empty($this->hashFile)) {
+            $this->printError("Hash file is required for incremental mode");
+            return;
+        }
+        
+        if (!file_exists($this->hashFile)) {
+            $this->printError("Hash file not found: {$this->hashFile}");
+            return;
+        }
+        
+        $hashes = $this->readHashFile();
+        $hashes = $this->filterPotfileHashes($hashes);
+        
+        if (empty($hashes)) {
+            $this->printInfo("All hashes already cracked (found in potfile)");
+            return;
+        }
+        
+        // Determine charset
+        $charset = $this->customCharsets['default'] ?? 'abcdefghijklmnopqrstuvwxyz';
+        
+        $generator = new IncrementalGenerator(
+            $this->incrementMin,
+            $this->incrementMax,
+            $charset
+        );
+        
+        $totalCombinations = $generator->getTotalCombinations();
+        
+        $this->printInfo("Incremental mode: length {$this->incrementMin}-{$this->incrementMax}");
+        $this->printInfo("Charset: " . (strlen($charset) > 20 ? substr($charset, 0, 20) . '...' : $charset) . " (" . strlen($charset) . " chars)");
+        $this->printInfo("Total combinations: " . number_format($totalCombinations));
+        
+        $this->stats->start();
+        $progressFile = $this->statusFile ? new ProgressFile($this->statusFile) : null;
+        
+        foreach ($hashes as $hashEntry) {
+            $hashEntry = trim($hashEntry);
+            if (empty($hashEntry)) continue;
+            
+            [$hash, $salt, $username] = $this->parseHashEntry($hashEntry);
+            $type = $this->hashType === 'auto' ? HashIdentifier::identify($hash) : $this->hashType;
+            
+            $this->printInfo("Attacking: {$hash} (Type: {$type})");
+            
+            $i = 0;
+            $found = false;
+            
+            foreach ($generator as $password) {
+                $i++;
+                
+                if ($this->verbose) {
+                    echo "Trying [{$i}/{$totalCombinations}]: {$password}\n";
+                }
+                
+                if (HashIdentifier::verify($password, $hash, $type, $salt)) {
+                    $this->printSuccess("Password Found: {$password}");
+                    $this->found[] = [$hash => $password];
+                    $this->stats->incrementFound();
+                    $this->addToPotfile($hash, $password);
+                    $found = true;
+                    break;
+                }
+                
+                $this->stats->incrementPasswords();
+                
+                if ($i % 10000 === 0) {
+                    $percentage = min(100, round(($i / $totalCombinations) * 100, 4));
+                    $this->printProgress($percentage, $i, $totalCombinations);
+                    
+                    if ($progressFile) {
+                        $progressFile->update([
+                            'hash' => $hash,
+                            'progress' => $percentage,
+                            'tried' => $i,
+                            'total' => $totalCombinations,
+                            'speed' => $this->stats->getSpeed(),
+                            'current_length' => $generator->getCurrentLength(),
+                        ]);
+                    }
+                }
+                
+                // Apply limit if set
+                if ($this->limit > 0 && $i >= $this->limit) {
+                    $this->printInfo("Limit reached ({$this->limit})");
+                    break;
+                }
+            }
+            
+            if (!$found) {
+                $this->printError("Password not found");
+            }
+            
+            $generator->rewind();
+        }
+        
+        $this->stats->stop();
+        $this->handleResults();
+        $this->printStatistics();
+    }
+    
+    private function runMarkovMode(): void
+    {
+        if (empty($this->hashFile)) {
+            $this->printError("Hash file is required for markov mode");
+            return;
+        }
+        
+        if (empty($this->markovFile) && empty($this->wordlistFile)) {
+            $this->printError("Markov model file (--markov-load) or training wordlist (-w) required");
+            return;
+        }
+        
+        $hashes = $this->readHashFile();
+        $hashes = $this->filterPotfileHashes($hashes);
+        
+        if (empty($hashes)) {
+            $this->printInfo("All hashes already cracked (found in potfile)");
+            return;
+        }
+        
+        $generator = new MarkovGenerator(
+            $this->markovOrder,
+            $this->incrementMin,
+            $this->incrementMax,
+            $this->limit > 0 ? $this->limit : 100000
+        );
+        
+        // Load or train
+        if ($this->markovFile && file_exists($this->markovFile)) {
+            $this->printInfo("Loading Markov model from: {$this->markovFile}");
+            $generator->load($this->markovFile);
+        } elseif ($this->wordlistFile) {
+            $this->printInfo("Training Markov model from: {$this->wordlistFile}");
+            $generator->trainFromFile($this->wordlistFile);
+        }
+        
+        $this->printInfo("Markov mode: order {$this->markovOrder}, length {$this->incrementMin}-{$this->incrementMax}");
+        $this->printInfo("Chains: " . $generator->getChainCount() . ", Start states: " . $generator->getStartCount());
+        
+        $this->stats->start();
+        
+        if ($this->webhook) {
+            $this->webhook->notifyStart($hashes, 'markov', $this->limit > 0 ? $this->limit : 100000);
+        }
+        
+        foreach ($hashes as $hashEntry) {
+            $hashEntry = trim($hashEntry);
+            if (empty($hashEntry)) continue;
+            
+            [$hash, $salt, $username] = $this->parseHashEntry($hashEntry);
+            $type = $this->hashType === 'auto' ? HashIdentifier::identify($hash) : $this->hashType;
+            
+            $this->printInfo("Attacking: {$hash} (Type: {$type})");
+            
+            $found = false;
+            $i = 0;
+            
+            foreach ($generator as $password) {
+                $i++;
+                
+                if ($this->verbose) {
+                    echo "Trying [{$i}]: {$password}\n";
+                }
+                
+                if (HashIdentifier::verify($password, $hash, $type, $salt)) {
+                    $this->printSuccess("Password Found: {$password}");
+                    $this->found[] = [$hash => $password];
+                    $this->stats->incrementFound();
+                    $this->addToPotfile($hash, $password);
+                    
+                    if ($this->webhook) {
+                        $this->webhook->notifyFound($hash, $password, $type);
+                    }
+                    
+                    $found = true;
+                    break;
+                }
+                
+                $this->stats->incrementPasswords();
+                
+                if ($i % 10000 === 0) {
+                    $this->printProgress(0, $i, 0);
+                }
+            }
+            
+            if (!$found) {
+                $this->printError("Password not found");
+            }
+        }
+        
+        $this->stats->stop();
+        
+        if ($this->webhook) {
+            $this->webhook->notifyComplete($this->found, $this->stats->getDuration(), $this->stats->getPasswordsTried());
+        }
+        
+        $this->handleResults();
+        $this->printStatistics();
+    }
+    
+    private function runKeyboardWalkMode(): void
+    {
+        if (empty($this->hashFile)) {
+            $this->printError("Hash file is required for keyboard-walk mode");
+            return;
+        }
+        
+        $hashes = $this->readHashFile();
+        $hashes = $this->filterPotfileHashes($hashes);
+        
+        if (empty($hashes)) {
+            $this->printInfo("All hashes already cracked (found in potfile)");
+            return;
+        }
+        
+        $generator = new KeyboardWalkGenerator($this->incrementMin, $this->incrementMax);
+        $patterns = $generator->getPatterns();
+        $totalPatterns = count($patterns);
+        
+        $this->printInfo("Keyboard walk mode: {$totalPatterns} patterns");
+        $this->printInfo("Length range: {$this->incrementMin}-{$this->incrementMax}");
+        
+        $this->stats->start();
+        
+        if ($this->webhook) {
+            $this->webhook->notifyStart($hashes, 'keyboard-walk', $totalPatterns);
+        }
+        
+        foreach ($hashes as $hashEntry) {
+            $hashEntry = trim($hashEntry);
+            if (empty($hashEntry)) continue;
+            
+            [$hash, $salt, $username] = $this->parseHashEntry($hashEntry);
+            $type = $this->hashType === 'auto' ? HashIdentifier::identify($hash) : $this->hashType;
+            
+            $this->printInfo("Attacking: {$hash} (Type: {$type})");
+            
+            $found = false;
+            $i = 0;
+            
+            foreach ($patterns as $password) {
+                $i++;
+                
+                if ($this->verbose) {
+                    echo "Trying [{$i}/{$totalPatterns}]: {$password}\n";
+                }
+                
+                if (HashIdentifier::verify($password, $hash, $type, $salt)) {
+                    $this->printSuccess("Password Found: {$password}");
+                    $this->found[] = [$hash => $password];
+                    $this->stats->incrementFound();
+                    $this->addToPotfile($hash, $password);
+                    
+                    if ($this->webhook) {
+                        $this->webhook->notifyFound($hash, $password, $type);
+                    }
+                    
+                    $found = true;
+                    break;
+                }
+                
+                $this->stats->incrementPasswords();
+                
+                if ($i % 100 === 0) {
+                    $percentage = round(($i / $totalPatterns) * 100, 2);
+                    $this->printProgress($percentage, $i, $totalPatterns);
+                }
+            }
+            
+            if (!$found) {
+                $this->printError("Password not found");
+            }
+        }
+        
+        $this->stats->stop();
+        
+        if ($this->webhook) {
+            $this->webhook->notifyComplete($this->found, $this->stats->getDuration(), $this->stats->getPasswordsTried());
+        }
+        
+        $this->handleResults();
+        $this->printStatistics();
+    }
+    
+    private function filterPotfileHashes(array $hashes): array
+    {
+        if (!$this->potfile) {
+            return $hashes;
+        }
+        
+        $alreadyCracked = $this->potfile->getAlreadyCracked($hashes);
+        if (!empty($alreadyCracked)) {
+            $this->printInfo("Found " . count($alreadyCracked) . " hash(es) in potfile:");
+            foreach ($alreadyCracked as $hash => $password) {
+                $this->printInfo("  {$hash} => {$password}");
+                $this->found[] = [$hash => $password];
+            }
+        }
+        
+        return $this->potfile->filterHashes($hashes);
+    }
+    
+    private function addToPotfile(string $hash, string $password): void
+    {
+        if ($this->potfile) {
+            $this->potfile->add($hash, $password);
+        }
+    }
+    
     private function runMaskMode(): void
     {
         if (empty($this->hashFile)) {
@@ -129,6 +658,13 @@ class BrutyF
         }
         
         $hashes = $this->readHashFile();
+        $hashes = $this->filterPotfileHashes($hashes);
+        
+        if (empty($hashes)) {
+            $this->printInfo("All hashes already cracked (found in potfile)");
+            return;
+        }
+        
         $generator = new MaskGenerator($this->mask);
         $totalCombinations = $generator->getTotalCombinations();
         
@@ -158,6 +694,7 @@ class BrutyF
                     $this->printSuccess("Password Found: {$password}");
                     $this->found[] = [$hash => $password];
                     $this->stats->incrementFound();
+                    $this->addToPotfile($hash, $password);
                     break;
                 }
                 
@@ -180,15 +717,30 @@ class BrutyF
     private function crackHashes(): void
     {
         $hashes = $this->readHashFile();
+        $hashes = $this->filterPotfileHashes($hashes);
+        
+        if (empty($hashes)) {
+            $this->printInfo("All hashes already cracked (found in potfile)");
+            return;
+        }
+        
         $totalHashes = count($hashes);
         $totalWords = $this->countLines($this->wordlistFile);
         
         $rulesMultiplier = empty($this->rules) ? 1 : count($this->rules);
         $effectiveTotal = $totalWords * $rulesMultiplier;
         
+        // Apply skip/limit for distributed cracking
+        $effectiveStart = $this->skip;
+        $effectiveEnd = $this->limit > 0 ? min($this->skip + $this->limit, $totalWords) : $totalWords;
+        $effectiveWords = $effectiveEnd - $effectiveStart;
+        
         $this->printInfo("Starting attack with {$totalHashes} hash(es) and {$totalWords} password(s)");
+        if ($this->skip > 0 || $this->limit > 0) {
+            $this->printInfo("Range: {$effectiveStart} to {$effectiveEnd} ({$effectiveWords} passwords)");
+        }
         if ($rulesMultiplier > 1) {
-            $this->printInfo("Rules enabled: {$rulesMultiplier} mutations per password ({$effectiveTotal} effective passwords)");
+            $this->printInfo("Rules enabled: {$rulesMultiplier} mutations per password");
         }
         $this->printInfo("Using {$this->threads} thread(s)");
         
@@ -217,8 +769,9 @@ class BrutyF
                 $this->printInfo("Attacking: {$hash} (Type: {$type})");
                 $this->logger->info("Attacking hash: {$hash}, type: {$type}");
                 
-                $startPosition = $this->session ? $this->session->getProgress($hashEntry) : 0;
-                $password = $this->crackHash($hash, $type, $salt, $totalWords, $startPosition);
+                $startPosition = $this->session ? $this->session->getProgress($hashEntry) : $this->skip;
+                $endPosition = $this->limit > 0 ? min($this->skip + $this->limit, $totalWords) : $totalWords;
+                $password = $this->crackHashWithRange($hash, $type, $salt, $startPosition, $endPosition);
                 
                 if ($password !== null) {
                     $this->printSuccess("Password Found: {$password}");
@@ -226,6 +779,7 @@ class BrutyF
                     $this->found[] = $result;
                     $this->stats->incrementFound();
                     $this->logger->info("Password found for {$hash}: {$password}");
+                    $this->addToPotfile($hash, $password);
                     
                     if ($this->session) {
                         $this->session->addFound($hashEntry, $password);
@@ -830,12 +1384,18 @@ class BrutyF
         
         echo "Usage:\n";
         echo "  {$script} -f=<hashfile> -w=<wordlist> [options]\n";
-        echo "  {$script} -f=<hashfile> -m=<mask> [options]\n\n";
+        echo "  {$script} -f=<hashfile> -m=<mask> [options]\n";
+        echo "  {$script} -f=<hashfile> -w=<wordlist> -m=<mask> [options]  (hybrid)\n";
+        echo "  {$script} -f=<hashfile> -w=<wordlist1> --wordlist2=<wordlist2> [options]  (combinator)\n\n";
         
         echo "Required:\n";
         echo "  -f, --hashfile=FILE     File containing hashed passwords (use '-' for stdin)\n";
         echo "  -w, --wordlist=FILE     Wordlist file (supports .gz, .bz2)\n";
         echo "  -m, --mask=MASK         Mask for brute-force mode\n\n";
+        
+        echo "Attack Modes:\n";
+        echo "  --attack-mode=MODE      Attack mode: wordlist, mask, hybrid, combinator\n";
+        echo "  --wordlist2=FILE        Second wordlist for combinator attack\n\n";
         
         echo "Options:\n";
         echo "  -t, --threads=NUM       Number of threads (1-16, default: 1)\n";
@@ -848,7 +1408,70 @@ class BrutyF
         echo "  -o, --output=FILE       Output file for results\n";
         echo "  --format=FORMAT         Output format (text, json, csv)\n";
         echo "  --log=FILE              Log file path\n";
-        echo "  --log-level=LEVEL       Log level (debug, info, warning, error)\n";
+        echo "  --log-level=LEVEL       Log level (debug, info, warning, error)\n\n";
+        
+        echo "Potfile Options:\n";
+        echo "  --potfile=FILE          Custom potfile path (default: ~/.brutyf.pot)\n";
+        echo "  --no-potfile            Disable potfile\n";
+        echo "  --show-pot              Show cracked hashes from potfile\n";
+        echo "  --analyze               Analyze cracked passwords from potfile\n\n";
+        
+        echo "Distributed Cracking:\n";
+        echo "  --skip=N                Skip first N passwords in wordlist\n";
+        echo "  --limit=N               Process only N passwords\n\n";
+        
+        echo "Utilities:\n";
+        echo "  --identify              Identify hash types in file\n";
+        echo "  --extract=FILE          Extract hashes from file (shadow, htpasswd, etc.)\n";
+        echo "  --extract-format=FMT    Format: auto, shadow, passwd, htpasswd, pwdump, csv\n";
+        echo "  --generate=PASS         Generate hash from password (or file of passwords)\n";
+        echo "  --generate-type=TYPE    Hash type for generation (default: md5, use 'all' for all)\n";
+        echo "  --wordlist-info=FILE    Show wordlist statistics\n\n";
+        
+        echo "Incremental Mode:\n";
+        echo "  --incremental           Enable incremental (brute-force) mode\n";
+        echo "  --increment-min=N       Minimum password length (default: 1)\n";
+        echo "  --increment-max=N       Maximum password length (default: 8)\n";
+        echo "  --charset=CHARS         Custom charset for incremental/mask mode\n";
+        echo "  --charset1-4=CHARS      Custom charsets for ?1 ?2 ?3 ?4 in masks\n\n";
+        
+        echo "Monitoring:\n";
+        echo "  --status-file=FILE      Write progress to file (JSON) for external monitoring\n";
+        echo "  --json                  Output in JSON format (for utilities)\n\n";
+        
+        echo "REST API Server:\n";
+        echo "  --server                Start REST API server\n";
+        echo "  --server-host=HOST      Server host (default: 127.0.0.1)\n";
+        echo "  --server-port=PORT      Server port (default: 8080)\n";
+        echo "  --api-key=KEY           Require API key for requests\n\n";
+        
+        echo "Webhooks:\n";
+        echo "  --webhook=URL           Send notifications to webhook URL\n";
+        echo "                          (Supports Discord, Slack, and generic webhooks)\n\n";
+        
+        echo "Markov Attack:\n";
+        echo "  --markov                Enable Markov chain attack mode\n";
+        echo "  --markov-train=FILE     Train Markov model from wordlist\n";
+        echo "  --markov-load=FILE      Load pre-trained Markov model\n";
+        echo "  --markov-save=FILE      Save trained model to file\n";
+        echo "  --markov-order=N        Markov chain order (default: 2)\n\n";
+        
+        echo "Keyboard Walk:\n";
+        echo "  --keyboard-walk         Enable keyboard walk attack mode\n\n";
+        
+        echo "Dictionary Generator:\n";
+        echo "  --dict-gen              Generate custom wordlist\n";
+        echo "  --dict-theme=THEME      Use theme: sports, animals, colors, tech, love, music, gaming, names\n";
+        echo "  --dict-words=FILE       Base words file\n";
+        echo "  --dict-no-leet          Disable leet speak variations\n";
+        echo "  --dict-no-years         Disable year suffixes\n";
+        echo "  --dict-year-start=YEAR  Start year for suffixes (default: 1970)\n";
+        echo "  --dict-year-end=YEAR    End year for suffixes (default: 2030)\n\n";
+        
+        echo "Other:\n";
+        echo "  --version               Show version number\n";
+        echo "  --clear-pot             Clear the potfile\n";
+        echo "  -b, --benchmark         Run hash speed benchmark\n";
         echo "  -a, --about             Show information about BrutyF\n";
         echo "  -h, --help              Show this help message\n\n";
         
@@ -869,7 +1492,14 @@ class BrutyF
         echo "  {$script} -f=hash.txt -w=passwords.txt -t=4\n";
         echo "  {$script} -f=hash.txt -w=rockyou.txt.gz -H=md5 --rules=leet,append_123\n";
         echo "  {$script} -f=hash.txt -m='?l?l?l?l?d?d' -t=8\n";
-        echo "  cat hashes.txt | {$script} -f=- -w=passwords.txt -q -o=results.json --format=json\n";
+        echo "  {$script} -f=hash.txt -w=words.txt -m='?d?d?d' (hybrid: word + 3 digits)\n";
+        echo "  {$script} -f=hash.txt -w=first.txt --wordlist2=last.txt (combinator)\n";
+        echo "  {$script} -f=hash.txt --incremental --increment-min=4 --increment-max=6\n";
+        echo "  {$script} --generate=password --generate-type=all\n";
+        echo "  {$script} --wordlist-info=rockyou.txt\n";
+        echo "  {$script} --benchmark\n";
+        echo "  {$script} --identify -f=hash.txt\n";
+        echo "  {$script} --analyze --json\n";
         echo "-----------------------------------------------------\n";
     }
     
