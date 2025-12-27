@@ -825,7 +825,8 @@
                 const data = await apiRequest('/api/benchmark');
                 
                 let html = '';
-                for (const [hashType, speed] of Object.entries(data.results)) {
+                for (const [hashType, result] of Object.entries(data.results)) {
+                    const speed = typeof result === 'object' ? result.speed : result;
                     const formattedSpeed = formatNumber(speed);
                     html += `
                         <div class="bg-white/5 rounded-lg p-4 text-center">

@@ -192,8 +192,10 @@ switch (true) {
     
     case $uri === \'/api/benchmark\' && $method === \'GET\':
         $benchmark = new Benchmark();
-        $results = $benchmark->runAndReturn();
-        jsonResponse([\'results\' => $results]);
+        ob_start();
+        $benchmark->run(false);
+        ob_end_clean();
+        jsonResponse([\'results\' => $benchmark->getResults()]);
         break;
     
     case $uri === \'/api/jobs\' && $method === \'GET\':
