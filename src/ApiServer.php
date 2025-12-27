@@ -200,6 +200,108 @@ switch (true) {
         jsonResponse([\'jobs\' => array_values($jobs)]);
         break;
     
+    case preg_match(\'#^/api/jobs/([a-f0-9]+)$#\', $uri, $matches) && $method === \'GET\':
+        $jobId = $matches[1];
+        if (!isset($jobs[$jobId])) {
+            jsonResponse([\'error\' => \'Job not found\'], 404);
+        }
+        
+        // Check if process is still running
+        $pid = $jobs[$jobId][\'pid\'] ?? 0;
+        $isRunning = $pid > 0 && file_exists("/proc/{$pid}");
+        
+        // Check potfile for cracked hashes
+        $potfile = new Potfile();
+        $found = [];
+        foreach ($jobs[$jobId][\'hashes\'] as $hash) {
+            $cracked = $potfile->get($hash);
+            if ($cracked !== null) {
+                $found[] = [$hash => $cracked];
+            }
+        }
+        $jobs[$jobId][\'found\'] = $found;
+        
+        // Update status based on process state
+        if (!$isRunning && $jobs[$jobId][\'status\'] === \'running\') {
+            $jobs[$jobId][\'status\'] = count($found) > 0 ? \'completed\' : \'completed\';
+            $jobs[$jobId][\'completed_at\'] = date(\'c\');
+        }
+        
+        saveJobs($jobs, $jobsFile);
+        jsonResponse($jobs[$jobId]);
+        break;
+    
+    case preg_match(\'#^/api/jobs/([a-f0-9]+)$#\', $uri, $matches) && $method === \'DELETE\':
+        $jobId = $matches[1];
+        if (!isset($jobs[$jobId])) {
+            jsonResponse([\'error\' => \'Job not found\'], 404);
+        }
+        if (isset($jobs[$jobId][\'pid\']) && function_exists(\'posix_kill\')) {
+            @posix_kill($jobs[$jobId][\'pid\'], 15);
+        }
+        $jobs[$jobId][\'status\'] = \'cancelled\';
+        saveJobs($jobs, $jobsFile);
+        jsonResponse([\'message\' => \'Job cancelled\', \'job\' => $jobs[$jobId]]);
+        break;
+    
+    case $uri === \'/api/crack\' && $method === \'POST\':
+        $input = json_decode(file_get_contents(\'php://input\'), true);
+        $hashes = $input[\'hashes\'] ?? [];
+        $wordlist = $input[\'wordlist\'] ?? \'\';
+        $mask = $input[\'mask\'] ?? \'\';
+        $hashType = $input[\'hash_type\'] ?? \'auto\';
+        $threads = $input[\'threads\'] ?? 1;
+        
+        if (empty($hashes)) {
+            jsonResponse([\'error\' => \'No hashes provided\'], 400);
+        }
+        if (empty($wordlist) && empty($mask)) {
+            jsonResponse([\'error\' => \'Wordlist or mask required\'], 400);
+        }
+        
+        $jobId = bin2hex(random_bytes(8));
+        $hashFile = sys_get_temp_dir() . "/brutyf_hashes_{$jobId}.txt";
+        $statusFile = sys_get_temp_dir() . "/brutyf_job_{$jobId}.json";
+        $outputFile = sys_get_temp_dir() . "/brutyf_output_{$jobId}.txt";
+        
+        file_put_contents($hashFile, implode("\\n", (array)$hashes));
+        
+        $job = [
+            \'id\' => $jobId,
+            \'status\' => \'pending\',
+            \'hashes\' => (array)$hashes,
+            \'wordlist\' => $wordlist,
+            \'mask\' => $mask,
+            \'hash_type\' => $hashType,
+            \'threads\' => $threads,
+            \'created_at\' => date(\'c\'),
+            \'found\' => [],
+        ];
+        
+        $jobs[$jobId] = $job;
+        saveJobs($jobs, $jobsFile);
+        
+        $attackArg = $wordlist ? "-w=" . escapeshellarg($wordlist) : "-m=" . escapeshellarg($mask);
+        $cmd = sprintf(
+            \'nohup php %s -f=%s %s -H=%s -t=%d --status-file=%s -o=%s -q > /dev/null 2>&1 & echo $!\',
+            escapeshellarg($brutyfPath),
+            escapeshellarg($hashFile),
+            $attackArg,
+            escapeshellarg($hashType),
+            (int)$threads,
+            escapeshellarg($statusFile),
+            escapeshellarg($outputFile)
+        );
+        
+        $pid = trim(shell_exec($cmd));
+        
+        $jobs[$jobId][\'status\'] = \'running\';
+        $jobs[$jobId][\'pid\'] = (int)$pid;
+        saveJobs($jobs, $jobsFile);
+        
+        jsonResponse([\'message\' => \'Job started\', \'job\' => $jobs[$jobId]], 201);
+        break;
+    
     default:
         jsonResponse([\'error\' => \'Not found\', \'uri\' => $uri], 404);
 }

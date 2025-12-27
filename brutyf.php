@@ -91,6 +91,12 @@ spl_autoload_register(function ($class) {
         "dict-no-numbers",
         "dict-year-start:",
         "dict-year-end:",
+        // GPU acceleration
+        "gpu",
+        "gpu-devices:",
+        "gpu-workload:",
+        "gpu-info",
+        "gpu-benchmark",
     ];
     $options = getopt($short_options, $long_options);
     
@@ -121,6 +127,44 @@ spl_autoload_register(function ($class) {
     if (isset($options["benchmark"]) || isset($options["b"])) {
         $brutyf = new BrutyF(['color' => $color]);
         $brutyf->benchmark();
+        exit(0);
+    }
+    
+    // GPU info
+    if (isset($options["gpu-info"])) {
+        $gpu = new GpuAccelerator($color);
+        $gpu->printStatus();
+        exit(0);
+    }
+    
+    // GPU benchmark
+    if (isset($options["gpu-benchmark"])) {
+        $gpu = new GpuAccelerator($color);
+        if (!$gpu->isAvailable()) {
+            echo ($color ? "\e[1;31m" : "") . "Error: GPU acceleration not available (hashcat not found)\n" . ($color ? "\e[0m" : "");
+            exit(1);
+        }
+        
+        $cyan = $color ? "\e[1;36m" : "";
+        $green = $color ? "\e[1;32m" : "";
+        $reset = $color ? "\e[0m" : "";
+        
+        echo "{$cyan}=== GPU Benchmark ==={$reset}\n\n";
+        echo "Running hashcat benchmark...\n\n";
+        
+        $results = $gpu->benchmark();
+        
+        if (empty($results)) {
+            echo "No benchmark results. Make sure you have a compatible GPU.\n";
+        } else {
+            foreach ($results as $type => $speed) {
+                $formatted = $speed >= 1000000000 ? sprintf("%.2f GH/s", $speed / 1000000000) :
+                            ($speed >= 1000000 ? sprintf("%.2f MH/s", $speed / 1000000) :
+                            ($speed >= 1000 ? sprintf("%.2f kH/s", $speed / 1000) :
+                            sprintf("%.0f H/s", $speed)));
+                echo "{$green}$type:{$reset} $formatted\n";
+            }
+        }
         exit(0);
     }
     
@@ -551,6 +595,9 @@ spl_autoload_register(function ($class) {
         'webhook' => $options["webhook"] ?? null,
         'markov_file' => $options["markov-file"] ?? $options["markov-load"] ?? null,
         'markov_order' => isset($options["markov-order"]) ? (int)$options["markov-order"] : 2,
+        'gpu' => isset($options["gpu"]),
+        'gpu_devices' => $options["gpu-devices"] ?? null,
+        'gpu_workload' => isset($options["gpu-workload"]) ? (int)$options["gpu-workload"] : 3,
     ];
     
     $brutyf = new BrutyF($config);

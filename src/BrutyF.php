@@ -39,6 +39,9 @@ class BrutyF
     private ?WebhookNotifier $webhook = null;
     private ?string $markovFile = null;
     private int $markovOrder = 2;
+    private bool $useGpu = false;
+    private ?string $gpuDevices = null;
+    private int $gpuWorkload = 3;
     
     private array $found = [];
     private bool $pcntlAvailable;
@@ -88,6 +91,9 @@ class BrutyF
         $this->webhookUrl = $options['webhook'] ?? null;
         $this->markovFile = $options['markov_file'] ?? null;
         $this->markovOrder = $options['markov_order'] ?? 2;
+        $this->useGpu = $options['gpu'] ?? false;
+        $this->gpuDevices = $options['gpu_devices'] ?? null;
+        $this->gpuWorkload = $options['gpu_workload'] ?? 3;
         
         if ($this->webhookUrl) {
             $this->webhook = new WebhookNotifier([$this->webhookUrl]);
@@ -115,6 +121,12 @@ class BrutyF
     public function run(): void
     {
         $this->printBanner();
+        
+        // GPU mode - use hashcat backend
+        if ($this->useGpu) {
+            $this->runGpuMode();
+            return;
+        }
         
         if ($this->attackMode === 'incremental') {
             $this->runIncrementalMode();
@@ -614,6 +626,99 @@ class BrutyF
         
         if ($this->webhook) {
             $this->webhook->notifyComplete($this->found, $this->stats->getDuration(), $this->stats->getPasswordsTried());
+        }
+        
+        $this->handleResults();
+        $this->printStatistics();
+    }
+    
+    private function runGpuMode(): void
+    {
+        $gpu = new GpuAccelerator($this->useColor);
+        
+        if (!$gpu->isAvailable()) {
+            $this->printError("GPU acceleration not available (hashcat not found)");
+            $this->printInfo("Install hashcat for GPU support: https://hashcat.net/hashcat/");
+            $this->printInfo("Falling back to CPU mode...\n");
+            $this->useGpu = false;
+            $this->run();
+            return;
+        }
+        
+        if (empty($this->hashFile)) {
+            $this->printError("Hash file is required for GPU mode");
+            return;
+        }
+        
+        if (!file_exists($this->hashFile)) {
+            $this->printError("Hash file not found: {$this->hashFile}");
+            return;
+        }
+        
+        $hashes = $this->readHashFile($this->hashFile);
+        if (empty($hashes)) {
+            $this->printError("No hashes found in file");
+            return;
+        }
+        
+        // Filter already cracked
+        $hashes = $this->filterPotfileHashes($hashes);
+        if (empty($hashes)) {
+            $this->printSuccess("All hashes already cracked (found in potfile)");
+            $this->handleResults();
+            return;
+        }
+        
+        $this->printInfo("GPU Mode: Using hashcat backend");
+        $this->printInfo("Hashcat path: " . $gpu->getHashcatPath());
+        $this->printInfo("Hash type: {$this->hashType}");
+        $this->printInfo("Hashes to crack: " . count($hashes));
+        
+        if (!empty($this->wordlistFile)) {
+            $this->printInfo("Wordlist: {$this->wordlistFile}");
+        } elseif (!empty($this->mask)) {
+            $this->printInfo("Mask: {$this->mask}");
+        }
+        
+        echo "\n";
+        $this->printInfo("Starting GPU attack...\n");
+        
+        $this->stats->start();
+        
+        if ($this->webhook) {
+            $this->webhook->notifyStart(count($hashes), $this->attackMode);
+        }
+        
+        $result = $gpu->crack([
+            'hashes' => $hashes,
+            'hash_type' => $this->hashType,
+            'wordlist' => $this->wordlistFile ?: null,
+            'mask' => $this->mask ?: null,
+            'rules' => !empty($this->rules) ? $this->rules[0] : null,
+            'devices' => $this->gpuDevices,
+            'workload' => $this->gpuWorkload,
+        ]);
+        
+        $this->stats->stop();
+        
+        if (!$result['success']) {
+            $this->printError("GPU attack failed: " . ($result['error'] ?? 'Unknown error'));
+            return;
+        }
+        
+        // Process results
+        foreach ($result['found'] as $hash => $password) {
+            $this->found[] = [$hash => $password];
+            $this->addToPotfile($hash, $password);
+            $this->printSuccess("Found: {$hash} => {$password}");
+            
+            if ($this->webhook) {
+                $this->webhook->notifyFound($hash, $password, $this->hashType);
+            }
+        }
+        
+        if ($this->webhook) {
+            $this->webhook->notifyComplete($this->found, $this->stats->getDuration(), 0);
         }
         
         $this->handleResults();
@@ -1468,6 +1573,13 @@ class BrutyF
         echo "  --dict-year-start=YEAR  Start year for suffixes (default: 1970)\n";
         echo "  --dict-year-end=YEAR    End year for suffixes (default: 2030)\n\n";
         
+        echo "GPU Acceleration:\n";
+        echo "  --gpu                   Enable GPU acceleration (requires hashcat)\n";
+        echo "  --gpu-devices=IDS       GPU device IDs to use (e.g., 1,2)\n";
+        echo "  --gpu-workload=N        Workload profile: 1=low, 2=default, 3=high, 4=nightmare\n";
+        echo "  --gpu-info              Show GPU status and available devices\n";
+        echo "  --gpu-benchmark         Run GPU benchmark\n\n";
+        
         echo "Other:\n";
         echo "  --version               Show version number\n";
         echo "  --clear-pot             Clear the potfile\n";
@@ -1500,6 +1612,8 @@ class BrutyF
         echo "  {$script} --benchmark\n";
         echo "  {$script} --identify -f=hash.txt\n";
         echo "  {$script} --analyze --json\n";
+        echo "  {$script} -f=hash.txt -w=rockyou.txt --gpu (GPU accelerated)\n";
+        echo "  {$script} --gpu-info (check GPU status)\n";
         echo "-----------------------------------------------------\n";
     }
     

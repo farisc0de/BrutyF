@@ -32,6 +32,15 @@
   - Leet speak, year suffixes, casing variations
   - Custom base words with `--dict-words=FILE`
 
+- **GPU Acceleration**
+  - `--gpu` to enable GPU-accelerated cracking via hashcat backend
+  - `--gpu-devices=IDS` to select specific GPU devices
+  - `--gpu-workload=N` for workload profiles (1-4)
+  - `--gpu-info` to display GPU status and available devices
+  - `--gpu-benchmark` to run GPU speed benchmark
+  - Supports all hashcat-compatible hash types
+  - Automatic fallback to CPU if hashcat not available
+
 ### New Classes
 
 - `ApiServer` - REST API server using PHP built-in server
@@ -39,6 +48,7 @@
 - `MarkovGenerator` - Markov chain password generation
 - `KeyboardWalkGenerator` - Keyboard pattern generation
 - `DictionaryGenerator` - Custom wordlist generation
+- `GpuAccelerator` - GPU acceleration via hashcat integration
 
 ---
 
